@@ -9,7 +9,7 @@
 
 
 struct espconn logger_conn;
-ip_addr_t *logger_ip;
+ip_addr_t logger_ip;
 esp_tcp logger_tcp;
 
 char logger_host[] = "gorilla.fritz.box";
@@ -42,7 +42,7 @@ void tcp_connected( void *arg )
     os_printf( "%s\n", __FUNCTION__ );
     espconn_regist_recvcb( conn, data_received );
 
-    os_sprintf( json_data, "{\"temperature\":{\"low\": \"%d\",\"high\": \"%d\",\"ambient\": \"%d\" }}", tLow,tHigh,tAmbient );
+    os_sprintf( json_data, "{\"message\":{\"sensor\":{\"temperature\":{\"low\": \"%d\",\"high\": \"%d\",\"ambient\": \"%d\" }}},\"nodeid\":%s}", tLow,tHigh,tAmbient,sMac );
     os_sprintf( buffer, "POST %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", 
                          logger_path, logger_host, os_strlen( json_data ), json_data );
     
@@ -116,8 +116,8 @@ void wifi_callback( System_Event_t *evt )
                         IP2STR(&evt->event_info.got_ip.mask),
                         IP2STR(&evt->event_info.got_ip.gw));
             os_printf("\n");
-            os_printf("resolving host :s\n",logger_host);
-            espconn_gethostbyname( &logger_conn, logger_host, logger_ip, dns_done );
+            os_printf("resolving host :%s\n",logger_host);
+            espconn_gethostbyname( &logger_conn, logger_host, &logger_ip, dns_done );
             break;
         }
         
