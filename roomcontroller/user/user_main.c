@@ -1,4 +1,4 @@
-/* main.c -- EmonTX 2 Esp8266 MQTT bridge
+/* main.c -- Esp8266 remote temperature & humidity sensor with mqtt output
 *
 * Copyright (c) 2015, Rein Velt
 * All rights reserved.
@@ -42,18 +42,16 @@
 
 #define LOW 0
 #define HIGH 1
-#define DELAY  1000 //milliSecs
-#define MYNODE    "/mqtt/roomctrl/node%x/sensor/dht22"
+#define DELAY  10000 //milliSecs
+#define MYNODE    "/mqtt/roomctrl/%x/dht22"
 #define DHT22_GPIO_NUM     2
 
 #define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
 #define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
 #define MAXTIMINGS 10000
 #define BREAKTIME 20
-static char hwaddr[6];
-
+ uint32_t unique_id;
 LOCAL os_timer_t interval_timer;
-
 MQTT_Client mqttClient;
 
 
@@ -62,12 +60,12 @@ static void ICACHE_FLASH_ATTR
 sendData(float t, float h)
 {
     INFO("\nSEND DATA\n");
-    char node[42]; os_sprintf(node,MYNODE,hwaddr);
+    char node[42]; os_sprintf(node,MYNODE,unique_id);
     char tval[7]; os_sprintf(tval,"%d.%d",(int)(t),(int)((t-(int)t)*100));
     char hval[7]; os_sprintf(hval,"%d.%d",(int)(h),(int)((h-(int)h)*100));
     char json[80]; os_sprintf(json,"{\"temperature\":\"%s\",\"humidity\":\"%s\"}",tval,hval);
     MQTT_Publish(&mqttClient, node,json,strlen(json), 0, 1);
-    os_printf("MESSAGE:\n");
+    os_printf("MESSAGE FROM %x:\n",unique_id);
     os_printf(json);
     os_printf("\n");
     
@@ -160,6 +158,7 @@ void wifiConnectCb(uint8_t status)
 {
 	if(status == STATION_GOT_IP){
 		MQTT_Connect(&mqttClient);
+	
 	} else {
 		MQTT_Disconnect(&mqttClient);
 	}
@@ -217,10 +216,11 @@ interval_cb(void *arg)
 
 void user_init(void)
 {
+        
 	uart_init(BIT_RATE_115200, BIT_RATE_115200);
 	os_delay_us(100000);
 	CFG_Load();
-	wifi_get_macaddr(0, hwaddr);
+	unique_id=system_get_chip_id();
 	MQTT_InitConnection(&mqttClient, sysCfg.mqtt_host, sysCfg.mqtt_port, sysCfg.security);
 	MQTT_InitClient(&mqttClient, sysCfg.device_id, sysCfg.mqtt_user, sysCfg.mqtt_pass, sysCfg.mqtt_keepalive, 1);
 	MQTT_InitLWT(&mqttClient, "/lwt", "offline", 0, 0);
