@@ -1,0 +1,235 @@
+/* main.c -- EmonTX 2 Esp8266 MQTT bridge
+*
+* Copyright (c) 2015, Rein Velt
+* All rights reserved.
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+*
+* * Redistributions of source code must retain the above copyright notice,
+* this list of conditions and the following disclaimer.
+* * Redistributions in binary form must reproduce the above copyright
+* notice, this list of conditions and the following disclaimer in the
+* documentation and/or other materials provided with the distribution.
+* * Neither the name of Redis nor the names of its contributors may be used
+* to endorse or promote products derived from this software without
+* specific prior written permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+* POSSIBILITY OF SUCH DAMAGE.
+*/
+#include "ets_sys.h"
+#include "driver/uart.h"
+#include "osapi.h"
+#include "mqtt.h"
+#include "wifi.h"
+#include "config.h"
+#include "debug.h"
+#include "gpio.h"
+#include "user_interface.h"
+#include "mem.h"
+#include "driver/gpio16.h"
+
+
+#define LOW 0
+#define HIGH 1
+#define DELAY  1000 //milliSecs
+#define MYNODE    "/mqtt/roomctrl/node%x/sensor/dht22"
+#define DHT22_GPIO_NUM     2
+
+#define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
+#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
+#define MAXTIMINGS 10000
+#define BREAKTIME 20
+static char hwaddr[6];
+
+LOCAL os_timer_t interval_timer;
+
+MQTT_Client mqttClient;
+
+
+
+static void ICACHE_FLASH_ATTR 
+sendData(float t, float h)
+{
+    INFO("\nSEND DATA\n");
+    char node[42]; os_sprintf(node,MYNODE,hwaddr);
+    char tval[7]; os_sprintf(tval,"%d.%d",(int)(t),(int)((t-(int)t)*100));
+    char hval[7]; os_sprintf(hval,"%d.%d",(int)(h),(int)((h-(int)h)*100));
+    char json[80]; os_sprintf(json,"{\"temperature\":\"%s\",\"humidity\":\"%s\"}",tval,hval);
+    MQTT_Publish(&mqttClient, node,json,strlen(json), 0, 1);
+    os_printf("MESSAGE:\n");
+    os_printf(json);
+    os_printf("\n");
+    
+}
+
+static void ICACHE_FLASH_ATTR
+readDHT()
+{
+    INFO("SENSOR READ\n");
+    int counter = 0;
+    int laststate = 1;
+    int i = 0;
+    int j = 0;
+    int checksum = 0;
+
+
+    int data[100];
+
+    data[0] = data[1] = data[2] = data[3] = data[4] = 0;
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U,FUNC_GPIO2); 
+    set_gpio_mode(DHT22_GPIO_NUM,GPIO_OUTPUT, 0);
+    GPIO_OUTPUT_SET(DHT22_GPIO_NUM, HIGH);
+    os_delay_us(250000);
+    GPIO_OUTPUT_SET(DHT22_GPIO_NUM, LOW);
+    os_delay_us(20000);
+    GPIO_OUTPUT_SET(DHT22_GPIO_NUM, HIGH);
+    os_delay_us(40);
+    GPIO_DIS_OUTPUT(DHT22_GPIO_NUM);
+    set_gpio_mode(DHT22_GPIO_NUM,GPIO_INPUT, GPIO_PULLUP);
+    PIN_PULLUP_EN(PERIPHS_IO_MUX_GPIO2_U);
+
+
+    // wait for pin to drop?
+    while (GPIO_INPUT_GET(DHT22_GPIO_NUM) == 1 && i<100000) {
+          os_delay_us(1);
+          i++;
+    }
+
+        if(i==100000){
+          INFO("DHT22 timeout, check connections with d4 (gpio2)\n");
+          return;
+          }
+
+    // read data - start port juggling
+    for (i = 0; i < MAXTIMINGS; i++) {
+        counter = 0;
+        while ( GPIO_INPUT_GET(DHT22_GPIO_NUM) == laststate) {
+            counter++;
+                        os_delay_us(1);
+            if (counter == 1000)
+                break;
+        }
+        laststate = GPIO_INPUT_GET(DHT22_GPIO_NUM);
+        if (counter == 1000) break;
+
+        if ((i>3) && (i%2 == 0)) {
+            // shove each bit into the storage bytes
+            data[j/8] <<= 1;
+            if (counter > BREAKTIME)
+                data[j/8] |= 1;
+            j++;
+        }
+    }
+    //end port juggle
+
+    //finalize
+    float temp_p, hum_p;
+    if (j >= 39) {
+        checksum = (data[0] + data[1] + data[2] + data[3]) & 0xFF;
+        if (data[4] == checksum) {
+            /* yay! checksum is valid */
+            
+            hum_p = data[0] * 256 + data[1];
+            hum_p /= 10;
+
+            temp_p = (data[2] & 0x7F)* 256 + data[3];
+            temp_p /= 10.0;
+            if (data[2] & 0x80)
+                temp_p *= -1;
+                
+            //send data     
+            sendData(temp_p,hum_p);   
+           
+        }
+    }
+
+}
+
+void wifiConnectCb(uint8_t status)
+{
+	if(status == STATION_GOT_IP){
+		MQTT_Connect(&mqttClient);
+	} else {
+		MQTT_Disconnect(&mqttClient);
+	}
+}
+
+
+void mqttConnectedCb(uint32_t *args)
+{
+	MQTT_Client* client = (MQTT_Client*)args;
+	INFO("MQTT: Connected\r\n");
+	//MQTT_Subscribe(client, MYNODE_EMONTX, 0);
+	
+}
+
+void mqttDisconnectedCb(uint32_t *args)
+{
+	MQTT_Client* client = (MQTT_Client*)args;
+	INFO("MQTT: Disconnected\r\n");
+}
+
+void mqttPublishedCb(uint32_t *args)
+{
+	MQTT_Client* client = (MQTT_Client*)args;
+	INFO("MQTT: Published\r\n");
+}
+
+void mqttDataCb(uint32_t *args, const char* topic, uint32_t topic_len, const char *data, uint32_t data_len)
+{
+	char *topicBuf = (char*)os_zalloc(topic_len+1),
+			*dataBuf = (char*)os_zalloc(data_len+1);
+
+	MQTT_Client* client = (MQTT_Client*)args;
+
+	os_memcpy(topicBuf, topic, topic_len);
+	topicBuf[topic_len] = 0;
+
+	os_memcpy(dataBuf, data, data_len);
+	dataBuf[data_len] = 0;
+
+	INFO("Receive topic: %s, data: %s \r\n", topicBuf, dataBuf);
+	os_free(topicBuf);
+	os_free(dataBuf);
+}
+
+LOCAL void ICACHE_FLASH_ATTR 
+interval_cb(void *arg)
+{
+    os_timer_disarm(&interval_timer);
+    readDHT();
+    os_timer_arm(&interval_timer, DELAY, 1);
+        	
+}
+
+
+
+void user_init(void)
+{
+	uart_init(BIT_RATE_115200, BIT_RATE_115200);
+	os_delay_us(100000);
+	CFG_Load();
+	wifi_get_macaddr(0, hwaddr);
+	MQTT_InitConnection(&mqttClient, sysCfg.mqtt_host, sysCfg.mqtt_port, sysCfg.security);
+	MQTT_InitClient(&mqttClient, sysCfg.device_id, sysCfg.mqtt_user, sysCfg.mqtt_pass, sysCfg.mqtt_keepalive, 1);
+	MQTT_InitLWT(&mqttClient, "/lwt", "offline", 0, 0);
+	MQTT_OnConnected(&mqttClient, mqttConnectedCb);
+	MQTT_OnDisconnected(&mqttClient, mqttDisconnectedCb);
+	MQTT_OnPublished(&mqttClient, mqttPublishedCb);
+	MQTT_OnData(&mqttClient, mqttDataCb);
+	WIFI_Connect(sysCfg.sta_ssid, sysCfg.sta_pwd, wifiConnectCb);
+	os_timer_disarm(&interval_timer);
+	os_timer_setfn(&interval_timer, (os_timer_func_t *)interval_cb, (void *)0);
+	os_timer_arm(&interval_timer, DELAY, 1);
+}
