@@ -1,13 +1,12 @@
-** ESPIOTCAR **
-===============
-Robotcar firmware for the Banggood ESP motor driver and the ESP8266 
-Internet Of Things controller.
+** SONY CAM REMOTE CONTROL **
+=============================
 
-* Collission detection *
-========================
-Collission detection is done with 3  infrared senders/receivers connected to GPIO
+Required hardware: Sony As/20 & ESP8266 
 
-* MQTT *
-========
-MQTT is implemented to make it possible to communicate with the car via internet 
-and to be used as interface between the car and a ROS-setup
+This program is used as interval trigger for the Sony AS/20 action camera.
+Because the built-in interval trigger only captures low-res images.
+With remote control (via WIFI) it is possible to make HI-RES interval images at maximum
+resolution of the camera. 
+
+The software is in the "user" folder. The rest is other required stuff like libraries and includefiles.
+
