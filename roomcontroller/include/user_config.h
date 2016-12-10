@@ -8,7 +8,7 @@
 
 /*DEFAULT CONFIGURATIONS*/
 
-#define MQTT_HOST			"gorilla.fritz.box" 
+#define MQTT_HOST			"mqttbroker" 
 #define MQTT_PORT			1883
 #define MQTT_BUF_SIZE		1024
 #define MQTT_KEEPALIVE		120	 /*second*/

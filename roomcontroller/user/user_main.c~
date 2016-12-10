@@ -63,7 +63,7 @@ sendData(float t, float h)
     char node[42]; os_sprintf(node,MYNODE,unique_id);
     char tval[7]; os_sprintf(tval,"%d.%d",(int)(t),(int)((t-(int)t)*100));
     char hval[7]; os_sprintf(hval,"%d.%d",(int)(h),(int)((h-(int)h)*100));
-    char json[80]; os_sprintf(json,"{\"temperature\":\"%s\",\"humidity\":\"%s\"}",tval,hval);
+    char json[80]; os_sprintf(json,"{\"temperature\":\"%s\",\"humidity\":%s}",tval,hval);
     MQTT_Publish(&mqttClient, node,json,strlen(json), 0, 1);
     os_printf("MESSAGE FROM %x:\n",unique_id);
     os_printf(json);

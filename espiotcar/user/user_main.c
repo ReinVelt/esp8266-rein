@@ -49,18 +49,13 @@
 #define MQTT_SENSOR_COLLISSION          "/car/sensor/collission"
 #define MQTT_MOTOR_LEFT                 "/car/motor/left"
 #define MQTT_MOTOR_RIGHT                "/car/motor/right"
-#define MQTT_REMOTE_DIRECTION           "/car/remote/direction"
+#define MQTT_REMOTE_DIRECTION           "/car/command"
 
 
 #define GPIO_PIN_MOTOR_LEFT_PWM            5
 #define GPIO_PIN_MOTOR_RIGHT_PWM           4
 #define GPIO_PIN_MOTOR_LEFT_ENABLE         0
 #define GPIO_PIN_MOTOR_RIGHT_ENABLE        2
-
-#define GPIO_PIN_COLLISSION1            14
-#define GPIO_PIN_COLLISSION2            12
-#define GPIO_PIN_COLLISSION3            13
-#define GPIO_PIN_COLLISSION4            15
 
 #define DIRECTION_STOP                      0
 #define DIRECTION_FORWARD                   1
@@ -84,9 +79,11 @@ LOCAL os_timer_t interval_timer;
 MQTT_Client mqttClient;
 int state;
 int sequenceCounter;
-uint8_t pwm_channels[]= {0};
+uint8_t pwm_channels[]= {0,1};
 uint16_t pwm_frequency = 1000;
 int collission=0;
+int direction=0;
+int speed=0;
 
 
 
@@ -139,83 +136,61 @@ void mqttDataCb(uint32_t *args, const char* topic, uint32_t topic_len, const cha
 	os_memcpy(dataBuf, data, data_len);
 	dataBuf[data_len] = 0;
 	INFO("Receive topic: %s, data: %s \r\n", topicBuf, dataBuf);
-	if (topicBuf==MQTT_REMOTE_DIRECTION)
-	{
-	        //REMOTE CONTROL
-	        //if (state!=STATE_COLLISSION && dataBuf!=DIRECTION_FORWARD)
-	        //{ 
+	
 	                state=STATE_OVERRIDE; 
-	                motor_run(dataBuf,255);
-	        //}
-	        
-	}
+	                motor_run(dataBuf[0]-48,1);
+	       
 	os_free(topicBuf);
 	os_free(dataBuf);
+	
 }
 
 
 void mqttWrite()
 {       
        
-        char collissionStr[1];
-        os_sprintf(collissionStr,"%x",collission);
-        INFO("collission: %x\n",collission);
-        MQTT_Publish(&mqttClient,MQTT_SENSOR_COLLISSION, collissionStr, 1, 0, 0);
+        //char collissionStr[1];
+       // os_sprintf(collissionStr,"%x",collission);
+        //INFO("collission: %x\n",collission);
+        MQTT_Publish(&mqttClient,"/car/reply", "OK", 1, 0, 0);
         //os_free(collissionStr);
         
 	
 }
 
 
-int getCollissionState()
-{
-        int collissionOld=collission;
-        PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTMS_U,FUNC_GPIO14);             //d5/gpio14 - sens0 - shuts down automagically	
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U,FUNC_GPIO12);             //d6/gpio12 - sens1
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U,FUNC_GPIO13);             //d7/gpio13 - sens2
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U,FUNC_GPIO15);             //d8/gpio15 - sens3 -conflict with flashing, keep high
-	set_gpio_mode(GPIO_PIN_COLLISSION1, GPIO_INPUT,  GPIO_PULLUP);
-	set_gpio_mode(GPIO_PIN_COLLISSION2, GPIO_INPUT,  GPIO_PULLUP);
-	set_gpio_mode(GPIO_PIN_COLLISSION3, GPIO_INPUT,  GPIO_PULLUP);
-	set_gpio_mode(GPIO_PIN_COLLISSION4, GPIO_INPUT,  GPIO_PULLUP);
-        collission=(1-GPIO_INPUT_GET(GPIO_PIN_COLLISSION1))*8+
-                   (1-GPIO_INPUT_GET(GPIO_PIN_COLLISSION2))*4+
-                   (1-GPIO_INPUT_GET(GPIO_PIN_COLLISSION3))*2+
-                   (1-GPIO_INPUT_GET(GPIO_PIN_COLLISSION4))*1;
-        if (collission!=collissionOld)
-        {
-                mqttWrite();
-        }
-        
-       
-}
+
 
 
 
 //==================== MOTOR FUNCTIONS ========================
 
-int motor_run(int direction,int speed)
+int motor_run(int newdirection,int newspeed)
 {
+   speed=newspeed;
+   direction=newdirection;
+   INFO("Motor run, direction: %d, speed: %d \r\n", direction,speed);
     int leftEnable=LOW;
     int rightEnable=LOW;
     switch (direction)
     {
-        case DIRECTION_STOP: leftEnable=LOW; rightEnable=LOW; break;
-        case DIRECTION_FORWARD: leftEnable=HIGH; rightEnable=HIGH; break;
-        case DIRECTION_BACKWARD: leftEnable=LOW; rightEnable=LOW; break;
-        case DIRECTION_CCW: leftEnable=LOW; rightEnable=HIGH; break;
-        case DIRECTION_CW: leftEnable=HIGH; rightEnable=LOW; break;
+        case DIRECTION_STOP:     leftEnable=LOW;  rightEnable=LOW;  break;
+        case DIRECTION_FORWARD:  leftEnable=HIGH; rightEnable=HIGH; break;
+        case DIRECTION_BACKWARD: leftEnable=LOW;  rightEnable=LOW;  break;
+        case DIRECTION_CCW:      leftEnable=LOW;  rightEnable=HIGH; break;
+        case DIRECTION_CW:       leftEnable=HIGH; rightEnable=LOW;  break;
     }  
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO5_U,FUNC_GPIO5);             //d1/gpio5  - motor l pwm
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO4_U,FUNC_GPIO4);             //d2/gpio4  - motor r pwm
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U,FUNC_GPIO0);             //d3/gpio0  - motor l direction
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U,FUNC_GPIO2);             //d4/gpio2  - motor r direction
     
-    gpio_write(GPIO_PIN_MOTOR_LEFT_ENABLE,leftEnable);
-    gpio_write(GPIO_PIN_MOTOR_RIGHT_ENABLE,rightEnable);
-    gpio_write(GPIO_PIN_MOTOR_LEFT_PWM,speed);
-    gpio_write(GPIO_PIN_MOTOR_RIGHT_PWM,speed);
-        
+    GPIO_OUTPUT_SET(GPIO_PIN_MOTOR_LEFT_ENABLE,leftEnable);
+    GPIO_OUTPUT_SET(GPIO_PIN_MOTOR_RIGHT_ENABLE,rightEnable);
+    //GPIO_OUTPUT_SET(GPIO_PIN_MOTOR_LEFT_PWM,speed);
+    //GPIO_OUTPUT_SET(GPIO_PIN_MOTOR_RIGHT_PWM,speed);
+    pwm_set_duty(speed,0);
+    pwm_set_duty(speed,2);   
 }
 
 int motor_stop()
@@ -243,16 +218,17 @@ LOCAL void ICACHE_FLASH_ATTR timer_cb(void *arg)
           if (state>STATE_CONNECTED)
           {
                 
-                int collission=getCollissionState();;
-                if (collission>0) { state=STATE_COLLISSION;} else {state=STATE_MOVE;}
+                state=STATE_OVERRIDE;
                 switch (state)
                 {
                         
-                        case STATE_MOVE:        runStateMove(); break;
-                        case STATE_COLLISSION:  runStateCollission(); break;
-                        case STATE_ERROR:      break;
-                        case STATE_OVERRIDE:   break;
+                        //case STATE_MOVE:        runStateMove(); break;
+                        //case STATE_COLLISSION:  runStateCollission(); break;
+                        //case STATE_ERROR:      break;
+                        //case STATE_OVERRIDE:   break;
+                        default: break;
                 }
+                motor_run(direction,speed);
         }
         os_timer_arm(&interval_timer, COMMUNICATION_INTERVAL, 1);
         	
@@ -295,21 +271,25 @@ void user_init(void)
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U,FUNC_GPIO0);             //d3/gpio0  - motor l direction
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U,FUNC_GPIO2);             //d4/gpio2  - motor r direction
 
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTMS_U,FUNC_GPIO14);             //d5/gpio14 - sens0 - shuts down automagically	
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U,FUNC_GPIO12);             //d6/gpio12 - sens1
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U,FUNC_GPIO13);             //d7/gpio13 - sens2
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U,FUNC_GPIO15);             //d8/gpio15 - sens3 -conflict with flashing, keep high
+	//PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTMS_U,FUNC_GPIO14);             //d5/gpio14 - sens0 - shuts down automagically	
+	//PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U,FUNC_GPIO12);             //d6/gpio12 - sens1
+	//PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U,FUNC_GPIO13);             //d7/gpio13 - sens2
+	//PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U,FUNC_GPIO15);             //d8/gpio15 - sens3 -conflict with flashing, keep high
 	
-	set_gpio_mode(GPIO_PIN_MOTOR_LEFT_ENABLE,  GPIO_OUTPUT, 0);
-	set_gpio_mode(GPIO_PIN_MOTOR_RIGHT_ENABLE, GPIO_OUTPUT, 0);
-	set_gpio_mode(GPIO_PIN_MOTOR_LEFT_PWM,     GPIO_OUTPUT, 0);
-	set_gpio_mode(GPIO_PIN_MOTOR_RIGHT_PWM,    GPIO_OUTPUT, 0);
+	set_gpio_mode(GPIO_PIN_MOTOR_LEFT_ENABLE,  GPIO_OUTPUT, GPIO_PULLDOWN);
+	set_gpio_mode(GPIO_PIN_MOTOR_RIGHT_ENABLE, GPIO_OUTPUT, GPIO_PULLDOWN);
+	set_gpio_mode(GPIO_PIN_MOTOR_LEFT_PWM,     GPIO_OUTPUT, GPIO_PULLDOWN);
+	set_gpio_mode(GPIO_PIN_MOTOR_RIGHT_PWM,    GPIO_OUTPUT, GPIO_PULLDOWN);
 	
-	set_gpio_mode(GPIO_PIN_COLLISSION1, GPIO_INPUT,  GPIO_PULLUP);
-	set_gpio_mode(GPIO_PIN_COLLISSION2, GPIO_INPUT,  GPIO_PULLUP);
-	set_gpio_mode(GPIO_PIN_COLLISSION3, GPIO_INPUT,  GPIO_PULLUP);
-	set_gpio_mode(GPIO_PIN_COLLISSION4, GPIO_INPUT,  GPIO_PULLUP);
+	//set_gpio_mode(GPIO_PIN_COLLISSION1, GPIO_INPUT,  GPIO_PULLUP);
+	//set_gpio_mode(GPIO_PIN_COLLISSION2, GPIO_INPUT,  GPIO_PULLUP);
+	//set_gpio_mode(GPIO_PIN_COLLISSION3, GPIO_INPUT,  GPIO_PULLUP);
+	//set_gpio_mode(GPIO_PIN_COLLISSION4, GPIO_INPUT,  GPIO_PULLUP);
 	
+	pwm_init(1000,pwm_channels);
+	pwm_start();
+	pwm_set_duty(0,0);
+	pwm_set_duty(0,2);
 
 	
 	//communication
