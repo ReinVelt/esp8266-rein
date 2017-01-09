@@ -1,5 +1,5 @@
 /*
- *  MQTT Switch
+ *  SonyCamRemote for ESP8266 & Sony AS/20
  *
  *  This firmware is meant for remote control with the ESP8266 via WIFI of the Sony As/20 action camera
  *
